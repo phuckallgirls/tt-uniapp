@@ -18,7 +18,7 @@
             scroll-y
             :scroll-top="scrollTop"
             :scroll-into-view="scrollToMessageId"
-            @scrolltoupper="handleLoadHistory"
+            @scrolltoupper="loadMoreMessages"
             :refresher-enabled="true"
             :refresher-triggered="isRefreshing"
             @refresherrefresh="handleRefresh"
@@ -248,6 +248,7 @@ import { UserStatus } from '@/types/user';
 import { messageManager } from '@/utils/message';
 import { uploadManager } from '@/utils/upload';
 import dayjs from 'dayjs';
+import { useChatStore } from '../../stores/chat';
 
 const userStore = useUserStore();
 const messages = ref<ChatMessage[]>([]);
@@ -310,6 +311,9 @@ onMounted(async () => {
         }
         scrollToBottom();
     });
+
+    const chatStore = useChatStore();
+    await chatStore.loadMessages(targetId, true);
 });
 
 onUnmounted(() => {
@@ -720,6 +724,11 @@ const getImageSize = (content: { width: number; height: number }) => {
     }
 
     return { width, height };
+};
+
+const loadMoreMessages = async () => {
+    const chatStore = useChatStore();
+    await chatStore.loadMessages(targetUser.value.userid);
 };
 </script>
 

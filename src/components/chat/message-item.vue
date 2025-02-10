@@ -38,7 +38,7 @@
                 <image 
                     v-else-if="message.type === 'image'"
                     class="image-content"
-                    :src="message.content"
+                    :src="localImageUrl"
                     mode="widthFix"
                     @tap="handleImageTap"
                     @load="handleImageLoad"
@@ -95,6 +95,7 @@ import { computed, ref } from 'vue';
 import type { Message } from '@/types/chat';
 import { useUserStore } from '@/stores/user';
 import { formatTime } from '@/utils/time';
+import { messageCacheManager } from '../../utils/cache';
 
 // 组件属性定义
 const props = defineProps<{
@@ -152,6 +153,23 @@ const handleFileTap = () => {
 const handleResend = () => {
     emit('resend', props.message);
 };
+
+// 本地图片URL
+const localImageUrl = ref('');
+
+// 加载图片
+const loadImage = async (url: string) => {
+    if (!url) return;
+    localImageUrl.value = await messageCacheManager.cacheImage(url);
+};
+
+// 生命周期钩子
+onMounted(() => {
+    // 如果是图片消息，进行缓存处理
+    if (props.message.type === 'image' && props.message.content) {
+        loadImage(props.message.content);
+    }
+});
 </script>
 
 <style lang="scss">

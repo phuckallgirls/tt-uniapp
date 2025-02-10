@@ -4,6 +4,8 @@ import type { Message, ChatSession } from '@/types/chat';
 import { useUserStore } from './user';
 import { useWebSocket } from '@/utils/websocket';
 import { uploadFile } from '@/utils/upload';
+import { messageCacheManager } from '../utils/cache';
+import type { MessagePage } from '../types/message';
 
 // 聊天状态管理
 export const useChatStore = defineStore('chat', () => {
@@ -16,6 +18,11 @@ export const useChatStore = defineStore('chat', () => {
     const messages = ref<{ [key: string]: Message[] }>({}); // 消息记录，key 为 sessionId
     const currentSessionId = ref<string>(''); // 当前会话 ID
     const loadingHistory = ref(false); // 是否正在加载历史消息
+    const messagePage = ref<MessagePage>({
+        pageSize: 20,
+        currentPage: 1,
+        hasMore: true
+    });
 
     // 计算属性
     const currentSession = computed(() => 
@@ -184,6 +191,47 @@ export const useChatStore = defineStore('chat', () => {
         }
     });
 
+    // 加载会话消息
+    const loadMessages = async (sessionId: string, refresh: boolean = false) => {
+        if (refresh) {
+            messagePage.value.currentPage = 1;
+            messagePage.value.hasMore = true;
+        }
+
+        if (!messagePage.value.hasMore) return;
+
+        const messages = messageCacheManager.getSessionMessages(
+            sessionId,
+            messagePage.value.currentPage,
+            messagePage.value.pageSize
+        );
+
+        if (messages.length < messagePage.value.pageSize) {
+            messagePage.value.hasMore = false;
+        }
+
+        if (refresh) {
+            messages.forEach((msg: Message) => {
+                addMessage(msg);
+            });
+        } else {
+            messages.forEach((msg: Message) => {
+                addMessage(msg, true);
+            });
+        }
+
+        messagePage.value.currentPage++;
+    };
+
+    // 保存消息
+    const saveMessage = async (sessionId: string, message: any) => {
+        // ... existing message saving logic ...
+        
+        // 保存到本地缓存
+        const messages = [...messages.value[sessionId], message];
+        messageCacheManager.saveSessionMessages(sessionId, messages);
+    };
+
     return {
         sessions,
         currentSessionId,
@@ -195,6 +243,9 @@ export const useChatStore = defineStore('chat', () => {
         sendFileMessage,
         loadHistory,
         switchSession,
-        clearUnread
+        clearUnread,
+        messagePage,
+        loadMessages,
+        saveMessage
     };
 }); 

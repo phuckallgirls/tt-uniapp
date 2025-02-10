@@ -125,4 +125,17 @@ export interface RecentChat {
     timestamp: number;        // 最后消息时间
     sticky?: boolean;         // 是否置顶
     muted?: boolean;          // 是否静音
+}
+
+export interface MessageCache {
+  id: string
+  localPath: string
+  createTime: number
+  expireTime: number
+}
+
+export interface MessagePage {
+  pageSize: number
+  currentPage: number
+  hasMore: boolean
 } 
