@@ -1,234 +1,162 @@
-import type { UploadType, UploadResult } from '@/types/upload';
+import { UploadFileResult } from '../types/upload'
+import { request } from './request'
 
-/**
- * 文件上传工具类
- */
-export class UploadManager {
-    private static instance: UploadManager;
-    private uploadUrl: string = ''; // Flamingo Gateway 的文件上传地址
+class UploadManager {
+  private readonly MAX_RETRY_TIMES = 3
+  private readonly CHUNK_SIZE = 1024 * 1024 // 1MB
+  private readonly IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'gif']
+  private readonly MAX_IMAGE_SIZE = 10 * 1024 * 1024 // 10MB
+  private readonly MAX_FILE_SIZE = 100 * 1024 * 1024 // 100MB
 
-    private constructor() {
-        // 单例模式
+  /**
+   * 上传图片
+   * @param tempFilePath 临时文件路径
+   * @param options 上传选项
+   * @returns 上传结果
+   */
+  public async uploadImage(
+    tempFilePath: string,
+    options: {
+      compress?: boolean
+      quality?: number
+      onProgress?: (progress: number) => void
+    } = {}
+  ): Promise<UploadFileResult> {
+    const { compress = true, quality = 80 } = options
+
+    try {
+      // 获取文件信息
+      const fileInfo = await uni.getFileInfo({
+        filePath: tempFilePath
+      })
+
+      // 检查文件大小
+      if (fileInfo.size > this.MAX_IMAGE_SIZE) {
+        throw new Error(`图片大小不能超过${this.MAX_IMAGE_SIZE / 1024 / 1024}MB`)
+      }
+
+      // 检查文件类型
+      const extension = tempFilePath.split('.').pop()?.toLowerCase()
+      if (!extension || !this.IMAGE_EXTENSIONS.includes(extension)) {
+        throw new Error('不支持的图片格式')
+      }
+
+      // 压缩图片
+      let uploadPath = tempFilePath
+      if (compress && ['jpg', 'jpeg', 'png'].includes(extension)) {
+        const compressRes = await uni.compressImage({
+          src: tempFilePath,
+          quality
+        })
+        uploadPath = compressRes.tempFilePath
+      }
+
+      // 上传图片
+      return await this.uploadFile(uploadPath, options.onProgress)
+    } catch (e) {
+      throw new Error(`图片上传失败: ${e.message}`)
     }
+  }
 
-    public static getInstance(): UploadManager {
-        if (!UploadManager.instance) {
-            UploadManager.instance = new UploadManager();
+  /**
+   * 上传文件
+   * @param tempFilePath 临时文件路径
+   * @param onProgress 进度回调
+   * @returns 上传结果
+   */
+  public async uploadFile(
+    tempFilePath: string,
+    onProgress?: (progress: number) => void
+  ): Promise<UploadFileResult> {
+    try {
+      // 获取文件信息
+      const fileInfo = await uni.getFileInfo({
+        filePath: tempFilePath
+      })
+
+      // 检查文件大小
+      if (fileInfo.size > this.MAX_FILE_SIZE) {
+        throw new Error(`文件大小不能超过${this.MAX_FILE_SIZE / 1024 / 1024}MB`)
+      }
+
+      let retryCount = 0
+      while (retryCount < this.MAX_RETRY_TIMES) {
+        try {
+          const result = await this.doUpload(tempFilePath, onProgress)
+          return result
+        } catch (e) {
+          retryCount++
+          if (retryCount === this.MAX_RETRY_TIMES) {
+            throw e
+          }
+          // 等待后重试
+          await new Promise(resolve => setTimeout(resolve, 1000))
         }
-        return UploadManager.instance;
+      }
+
+      throw new Error('上传失败，请重试')
+    } catch (e) {
+      throw new Error(`文件上传失败: ${e.message}`)
     }
+  }
 
-    /**
-     * 初始化上传地址
-     */
-    public init(url: string) {
-        this.uploadUrl = url;
-    }
-
-    /**
-     * 上传文件
-     * @param filePath 本地文件路径
-     * @param type 上传类型
-     * @param options 额外选项
-     */
-    public async uploadFile(
-        filePath: string,
-        type: UploadType,
-        options: {
-            onProgress?: (progress: number) => void;
-            compression?: boolean;
-        } = {}
-    ): Promise<UploadResult> {
-        const { onProgress, compression = true } = options;
-
-        // 如果是图片且需要压缩
-        if (type === UploadType.IMAGE && compression) {
-            const compressedPath = await this.compressImage(filePath);
-            filePath = compressedPath;
-        }
-
-        // 获取文件信息
-        const fileInfo = await this.getFileInfo(filePath);
-
-        return new Promise((resolve, reject) => {
-            const uploadTask = uni.uploadFile({
-                url: this.uploadUrl,
-                filePath,
-                name: 'file',
-                formData: {
-                    type: type.toString(),
-                    name: fileInfo.name,
-                    size: fileInfo.size.toString()
-                },
-                success: (res) => {
-                    if (res.statusCode === 200) {
-                        try {
-                            const result = JSON.parse(res.data);
-                            resolve({
-                                url: result.url,
-                                path: result.path,
-                                size: fileInfo.size,
-                                name: fileInfo.name,
-                                type: fileInfo.type,
-                                uploadTime: Date.now()
-                            });
-                        } catch (error) {
-                            reject(new Error('上传响应解析失败'));
-                        }
-                    } else {
-                        reject(new Error(`上传失败: ${res.statusCode}`));
-                    }
-                },
-                fail: (error) => {
-                    reject(new Error(`上传失败: ${error.errMsg}`));
-                }
-            });
-
-            // 监听上传进度
-            if (onProgress) {
-                uploadTask.onProgressUpdate((res) => {
-                    onProgress(res.progress);
-                });
+  /**
+   * 执行上传
+   * @param tempFilePath 临时文件路径
+   * @param onProgress 进度回调
+   * @returns 上传结果
+   */
+  private async doUpload(
+    tempFilePath: string,
+    onProgress?: (progress: number) => void
+  ): Promise<UploadFileResult> {
+    return new Promise((resolve, reject) => {
+      const uploadTask = uni.uploadFile({
+        url: '/api/upload',
+        filePath: tempFilePath,
+        name: 'file',
+        success: (res) => {
+          try {
+            const data = JSON.parse(res.data)
+            if (data.code === 0 && data.data) {
+              resolve({
+                url: data.data.url,
+                size: data.data.size,
+                name: data.data.name,
+                type: data.data.type
+              })
+            } else {
+              reject(new Error(data.message || '上传失败'))
             }
-        });
-    }
-
-    /**
-     * 压缩图片
-     */
-    private async compressImage(filePath: string): Promise<string> {
-        return new Promise((resolve, reject) => {
-            uni.compressImage({
-                src: filePath,
-                quality: 80,
-                success: (res) => {
-                    resolve(res.tempFilePath);
-                },
-                fail: (error) => {
-                    console.warn('图片压缩失败，使用原图:', error);
-                    resolve(filePath);
-                }
-            });
-        });
-    }
-
-    /**
-     * 获取文件信息
-     */
-    private async getFileInfo(filePath: string): Promise<{
-        name: string;
-        size: number;
-        type: string;
-    }> {
-        return new Promise((resolve, reject) => {
-            uni.getFileInfo({
-                filePath,
-                success: (res) => {
-                    const name = filePath.split('/').pop() || 'unknown';
-                    const ext = name.split('.').pop()?.toLowerCase() || '';
-                    resolve({
-                        name,
-                        size: res.size,
-                        type: this.getFileType(ext)
-                    });
-                },
-                fail: (error) => {
-                    reject(new Error(`获取文件信息失败: ${error.errMsg}`));
-                }
-            });
-        });
-    }
-
-    /**
-     * 获取文件类型
-     */
-    private getFileType(ext: string): string {
-        const imageExts = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
-        const videoExts = ['mp4', 'mov', 'avi', 'wmv'];
-        const audioExts = ['mp3', 'wav', 'aac', 'ogg'];
-
-        if (imageExts.includes(ext)) {
-            return 'image/' + ext;
-        } else if (videoExts.includes(ext)) {
-            return 'video/' + ext;
-        } else if (audioExts.includes(ext)) {
-            return 'audio/' + ext;
-        } else {
-            return 'application/octet-stream';
+          } catch (e) {
+            reject(new Error('解析响应失败'))
+          }
+        },
+        fail: (err) => {
+          reject(new Error(err.errMsg || '上传失败'))
         }
-    }
+      })
 
-    /**
-     * 选择文件
-     */
-    public async chooseFile(type: UploadType): Promise<string> {
-        switch (type) {
-            case UploadType.IMAGE:
-                return this.chooseImage();
-            case UploadType.VOICE:
-                return this.chooseVoice();
-            case UploadType.FILE:
-                return this.chooseDocument();
-            default:
-                throw new Error('不支持的文件类型');
-        }
-    }
+      if (onProgress && uploadTask) {
+        uploadTask.onProgressUpdate((res) => {
+          onProgress(res.progress)
+        })
+      }
+    })
+  }
 
-    /**
-     * 选择图片
-     */
-    private async chooseImage(): Promise<string> {
-        return new Promise((resolve, reject) => {
-            uni.chooseImage({
-                count: 1,
-                sizeType: ['original', 'compressed'],
-                sourceType: ['album', 'camera'],
-                success: (res) => {
-                    resolve(res.tempFilePaths[0]);
-                },
-                fail: (error) => {
-                    reject(new Error(`选择图片失败: ${error.errMsg}`));
-                }
-            });
-        });
-    }
-
-    /**
-     * 选择语音
-     */
-    private async chooseVoice(): Promise<string> {
-        return new Promise((resolve, reject) => {
-            uni.chooseMessageFile({
-                count: 1,
-                type: 'file',
-                extension: ['.mp3', '.wav', '.aac'],
-                success: (res) => {
-                    resolve(res.tempFiles[0].path);
-                },
-                fail: (error) => {
-                    reject(new Error(`选择语音失败: ${error.errMsg}`));
-                }
-            });
-        });
-    }
-
-    /**
-     * 选择文档
-     */
-    private async chooseDocument(): Promise<string> {
-        return new Promise((resolve, reject) => {
-            uni.chooseMessageFile({
-                count: 1,
-                type: 'file',
-                success: (res) => {
-                    resolve(res.tempFiles[0].path);
-                },
-                fail: (error) => {
-                    reject(new Error(`选择文件失败: ${error.errMsg}`));
-                }
-            });
-        });
-    }
+  /**
+   * 取消上传
+   * @param taskId 上传任务ID
+   */
+  public cancelUpload(taskId: string): void {
+    const uploadTask = uni.uploadFile({
+      url: '/api/upload',
+      filePath: '',
+      name: 'file'
+    })
+    uploadTask.abort()
+  }
 }
 
-export const uploadManager = UploadManager.getInstance(); 
+export const uploadManager = new UploadManager()

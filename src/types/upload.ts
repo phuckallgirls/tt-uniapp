@@ -1,16 +1,16 @@
-// 上传类型枚举
-export enum UploadType {
-    IMAGE = 'image',
-    VOICE = 'voice',
-    FILE = 'file'
+export interface UploadFileResult {
+  url: string
+  size: number
+  name: string
+  type: string
 }
 
-// 上传结果接口
-export interface UploadResult {
-    url: string;        // 文件访问URL
-    path: string;       // 文件存储路径
-    size: number;       // 文件大小
-    name: string;       // 文件名
-    type: string;       // 文件类型
-    uploadTime: number; // 上传时间戳
-} 
+export interface UploadTask {
+  taskId: string
+  fileName: string
+  progress: number
+  status: 'pending' | 'uploading' | 'success' | 'fail'
+  result?: UploadFileResult
+  error?: string
+}
+

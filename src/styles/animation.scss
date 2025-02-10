@@ -1,0 +1,161 @@
+// 页面切换动画
+.slide-left-enter-active,
+.slide-left-leave-active,
+.slide-right-enter-active,
+.slide-right-leave-active {
+  transition: all 0.3s ease-out;
+}
+
+.slide-left-enter-from {
+  transform: translateX(100%);
+  opacity: 0;
+}
+
+.slide-left-leave-to {
+  transform: translateX(-30%);
+  opacity: 0;
+}
+
+.slide-right-enter-from {
+  transform: translateX(-100%);
+  opacity: 0;
+}
+
+.slide-right-leave-to {
+  transform: translateX(30%);
+  opacity: 0;
+}
+
+// 淡入淡出动画
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.3s ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
+
+// 弹出动画
+.popup-enter-active,
+.popup-leave-active {
+  transition: all 0.3s ease-out;
+}
+
+.popup-enter-from {
+  transform: translateY(100%);
+  opacity: 0;
+}
+
+.popup-leave-to {
+  transform: translateY(100%);
+  opacity: 0;
+}
+
+// 缩放动画
+.scale-enter-active,
+.scale-leave-active {
+  transition: all 0.3s ease-out;
+}
+
+.scale-enter-from,
+.scale-leave-from {
+  transform: scale(0.9);
+  opacity: 0;
+}
+
+// 列表项动画
+.list-item-enter-active,
+.list-item-leave-active {
+  transition: all 0.3s ease-out;
+}
+
+.list-item-enter-from {
+  transform: translateX(30px);
+  opacity: 0;
+}
+
+.list-item-leave-to {
+  transform: translateX(-30px);
+  opacity: 0;
+}
+
+// 加载动画
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes pulse {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.05); }
+  100% { transform: scale(1); }
+}
+
+@keyframes bounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
+
+// 下拉刷新动画
+@keyframes refresh-rotate {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes refresh-down {
+  from { transform: translateY(-100%); }
+  to { transform: translateY(0); }
+}
+
+// 骨架屏动画
+@keyframes skeleton-loading {
+  0% { background-position: 100% 50%; }
+  100% { background-position: 0 50%; }
+}
+
+.skeleton {
+  background: linear-gradient(90deg, 
+    rgba(190, 190, 190, 0.2) 25%, 
+    rgba(129, 129, 129, 0.24) 37%, 
+    rgba(190, 190, 190, 0.2) 63%
+  );
+  background-size: 400% 100%;
+  animation: skeleton-loading 1.4s ease infinite;
+}
+
+// 加载中状态
+.loading {
+  position: relative;
+  
+  &::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 30rpx;
+    height: 30rpx;
+    margin: -15rpx 0 0 -15rpx;
+    border: 3rpx solid #ddd;
+    border-top-color: #07c160;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+}
+
+// 过渡遮罩
+.transition-mask {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.3);
+  transition: opacity 0.3s ease;
+  
+  &.hidden {
+    opacity: 0;
+    pointer-events: none;
+  }
+} 

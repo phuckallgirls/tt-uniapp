@@ -1,318 +1,399 @@
 <template>
-    <view 
-        class="message-item"
+  <view class="message-item" :class="{ 'self': isSelf }">
+    <!-- 头像 -->
+    <image 
+      class="avatar" 
+      :src="message.sender.avatar" 
+      @tap="onAvatarTap"
+    />
+
+    <!-- 消息内容 -->
+    <view class="content">
+      <!-- 发送者名称 -->
+      <text 
+        v-if="!isSelf && showName" 
+        class="sender-name"
+      >{{ message.sender.nickname }}</text>
+
+      <!-- 消息气泡 -->
+      <view 
+        class="bubble"
         :class="[
-            message.senderId === currentUserId ? 'self' : 'other',
-            `type-${message.type}`
+          `type-${message.type}`,
+          { 'sending': message.status === 'sending' },
+          { 'failed': message.status === 'failed' }
         ]"
-    >
-        <!-- 头像 -->
+      >
+        <!-- 文本消息 -->
+        <text 
+          v-if="message.type === 'text'" 
+          class="text-content"
+          :selectable="true"
+        >{{ message.content }}</text>
+
+        <!-- 图片消息 -->
         <image 
-            v-if="message.senderId !== currentUserId"
-            class="avatar"
-            :src="senderAvatar"
-            mode="aspectFill"
-            @tap="handleAvatarTap"
+          v-else-if="message.type === 'image'" 
+          class="image-content"
+          :src="localImageUrl || message.content"
+          :class="{ 'loading': !localImageUrl }"
+          mode="widthFix"
+          @tap="previewImage"
+          @load="onImageLoad"
+          @error="onImageError"
         />
 
-        <!-- 消息内容容器 -->
-        <view class="content-wrapper">
-            <!-- 发送者名称 -->
-            <text 
-                v-if="message.senderId !== currentUserId && showName"
-                class="sender-name"
-            >
-                {{ senderName }}
-            </text>
+        <!-- 文件消息 -->
+        <file-preview
+          v-else-if="message.type === 'file'"
+          :file-url="message.content"
+          :file-name="message.fileName"
+          :file-size="message.fileSize"
+        />
 
-            <!-- 消息内容 -->
-            <view class="content" :class="{ 'has-status': message.status }">
-                <!-- 文本消息 -->
-                <text 
-                    v-if="message.type === 'text'"
-                    class="text-content"
-                    :selectable="true"
-                >{{ message.content }}</text>
-
-                <!-- 图片消息 -->
-                <image 
-                    v-else-if="message.type === 'image'"
-                    class="image-content"
-                    :src="localImageUrl"
-                    mode="widthFix"
-                    @tap="handleImageTap"
-                    @load="handleImageLoad"
-                />
-
-                <!-- 文件消息 -->
-                <view 
-                    v-else-if="message.type === 'file'"
-                    class="file-content"
-                    @tap="handleFileTap"
-                >
-                    <text class="iconfont icon-file"></text>
-                    <view class="file-info">
-                        <text class="file-name">{{ getFileName(message.content) }}</text>
-                        <text class="file-size" v-if="fileSize">{{ fileSize }}</text>
-                    </view>
-                    <text class="iconfont icon-download"></text>
-                </view>
-
-                <!-- 消息状态 -->
-                <view v-if="message.status" class="message-status">
-                    <!-- 发送中 -->
-                    <view v-if="message.status === 'sending'" class="status-sending">
-                        <text class="iconfont icon-loading loading"></text>
-                    </view>
-                    <!-- 发送失败 -->
-                    <view 
-                        v-else-if="message.status === 'failed'"
-                        class="status-failed"
-                        @tap="handleResend"
-                    >
-                        <text class="iconfont icon-warning"></text>
-                    </view>
-                </view>
-            </view>
-
-            <!-- 消息时间 -->
-            <text class="time">{{ formatTime(message.timestamp) }}</text>
+        <!-- 语音消息 -->
+        <view 
+          v-else-if="message.type === 'voice'"
+          class="voice-content"
+          @tap="playVoice"
+        >
+          <text class="duration">{{ formatDuration(message.duration) }}</text>
+          <view class="voice-icon" :class="{ 'playing': isPlaying }">
+            <text class="iconfont icon-voice"></text>
+          </view>
         </view>
 
-        <!-- 自己的头像 -->
-        <image 
-            v-if="message.senderId === currentUserId"
-            class="avatar"
-            :src="senderAvatar"
-            mode="aspectFill"
-            @tap="handleAvatarTap"
-        />
+        <!-- 消息状态 -->
+        <view class="status" v-if="message.status">
+          <text 
+            v-if="message.status === 'sending'" 
+            class="iconfont icon-loading loading"
+          ></text>
+          <text 
+            v-else-if="message.status === 'failed'" 
+            class="iconfont icon-warning failed"
+            @tap="resendMessage"
+          ></text>
+        </view>
+      </view>
+
+      <!-- 消息时间 -->
+      <text class="time">{{ formatTime(message.time) }}</text>
     </view>
+  </view>
 </template>
 
-<script setup lang="ts">
-import { computed, ref } from 'vue';
-import type { Message } from '@/types/chat';
-import { useUserStore } from '@/stores/user';
-import { formatTime } from '@/utils/time';
-import { messageCacheManager } from '../../utils/cache';
+<script lang="ts">
+import { defineComponent } from 'vue'
+import FilePreview from './file-preview.vue'
+import { formatTime, formatDuration } from '../../utils/time'
 
-// 组件属性定义
-const props = defineProps<{
-    message: Message;          // 消息对象
-    showName?: boolean;        // 是否显示发送者名称
-    senderName?: string;       // 发送者名称
-    senderAvatar?: string;     // 发送者头像
-}>();
+export default defineComponent({
+  name: 'MessageItem',
 
-// 事件定义
-const emit = defineEmits<{
-    (e: 'resend', message: Message): void;           // 重新发送消息
-    (e: 'avatar-tap', userId: string): void;         // 点击头像
-    (e: 'image-tap', url: string): void;            // 点击图片
-    (e: 'file-tap', url: string): void;             // 点击文件
-}>();
+  components: {
+    FilePreview
+  },
 
-const userStore = useUserStore();
-const currentUserId = computed(() => userStore.userId);
-
-// 文件大小
-const fileSize = ref<string>('');
-
-// 获取文件名
-const getFileName = (url: string): string => {
-    try {
-        return decodeURIComponent(url.split('/').pop() || '未知文件');
-    } catch {
-        return '未知文件';
+  props: {
+    message: {
+      type: Object,
+      required: true
+    },
+    showName: {
+      type: Boolean,
+      default: true
+    },
+    isSelf: {
+      type: Boolean,
+      default: false
     }
-};
+  },
 
-// 图片加载完成处理
-const handleImageLoad = (e: any) => {
-    // 可以在这里处理图片加载完成后的逻辑
-    // 比如更新消息高度等
-};
-
-// 点击头像
-const handleAvatarTap = () => {
-    emit('avatar-tap', props.message.senderId);
-};
-
-// 点击图片
-const handleImageTap = () => {
-    emit('image-tap', props.message.content);
-};
-
-// 点击文件
-const handleFileTap = () => {
-    emit('file-tap', props.message.content);
-};
-
-// 重新发送消息
-const handleResend = () => {
-    emit('resend', props.message);
-};
-
-// 本地图片URL
-const localImageUrl = ref('');
-
-// 加载图片
-const loadImage = async (url: string) => {
-    if (!url) return;
-    localImageUrl.value = await messageCacheManager.cacheImage(url);
-};
-
-// 生命周期钩子
-onMounted(() => {
-    // 如果是图片消息，进行缓存处理
-    if (props.message.type === 'image' && props.message.content) {
-        loadImage(props.message.content);
+  data() {
+    return {
+      localImageUrl: '',
+      isPlaying: false,
+      audioContext: null as any,
+      imageLoadRetries: 0,
+      maxImageLoadRetries: 3
     }
-});
+  },
+
+  methods: {
+    formatTime,
+    formatDuration,
+
+    onAvatarTap() {
+      this.$emit('avatar-tap', this.message.sender)
+    },
+
+    async previewImage() {
+      if (this.message.type !== 'image') return
+      
+      try {
+        await uni.previewImage({
+          urls: [this.localImageUrl || this.message.content],
+          current: this.localImageUrl || this.message.content
+        })
+      } catch (e) {
+        uni.showToast({
+          title: '预览失败',
+          icon: 'none'
+        })
+      }
+    },
+
+    async loadImage() {
+      if (this.message.type !== 'image') return
+      
+      try {
+        // 检查本地缓存
+        const key = `img_${this.message.content}`
+        const localInfo = uni.getStorageSync(key)
+        
+        if (localInfo && localInfo.path) {
+          try {
+            const fs = uni.getFileSystemManager()
+            fs.accessSync(localInfo.path)
+            this.localImageUrl = localInfo.path
+            return
+          } catch (e) {
+            uni.removeStorageSync(key)
+          }
+        }
+
+        // 下载图片
+        const res = await uni.downloadFile({
+          url: this.message.content
+        })
+
+        if (res.statusCode === 200) {
+          const key = `img_${this.message.content}`
+          uni.setStorageSync(key, {
+            path: res.tempFilePath,
+            time: Date.now()
+          })
+          this.localImageUrl = res.tempFilePath
+        } else {
+          throw new Error('图片加载失败')
+        }
+      } catch (e) {
+        if (this.imageLoadRetries < this.maxImageLoadRetries) {
+          this.imageLoadRetries++
+          setTimeout(() => this.loadImage(), 1000)
+        }
+      }
+    },
+
+    onImageLoad() {
+      this.imageLoadRetries = 0
+    },
+
+    onImageError() {
+      if (this.imageLoadRetries < this.maxImageLoadRetries) {
+        this.imageLoadRetries++
+        setTimeout(() => this.loadImage(), 1000)
+      }
+    },
+
+    async playVoice() {
+      if (this.message.type !== 'voice' || this.isPlaying) return
+
+      try {
+        if (!this.audioContext) {
+          this.audioContext = uni.createInnerAudioContext()
+          this.audioContext.onEnded(() => {
+            this.isPlaying = false
+          })
+          this.audioContext.onError(() => {
+            this.isPlaying = false
+            uni.showToast({
+              title: '播放失败',
+              icon: 'none'
+            })
+          })
+        }
+
+        this.audioContext.src = this.message.content
+        this.audioContext.play()
+        this.isPlaying = true
+      } catch (e) {
+        uni.showToast({
+          title: '播放失败',
+          icon: 'none'
+        })
+      }
+    },
+
+    resendMessage() {
+      this.$emit('resend', this.message)
+    }
+  },
+
+  watch: {
+    'message.content': {
+      immediate: true,
+      handler(newVal) {
+        if (this.message.type === 'image' && newVal) {
+          this.loadImage()
+        }
+      }
+    }
+  },
+
+  beforeUnmount() {
+    if (this.audioContext) {
+      this.audioContext.destroy()
+    }
+  }
+})
 </script>
 
 <style lang="scss">
 .message-item {
-    padding: 20rpx;
+  display: flex;
+  padding: 20rpx;
+  
+  &.self {
+    flex-direction: row-reverse;
+    
+    .content {
+      margin: 0 20rpx 0 100rpx;
+      align-items: flex-end;
+      
+      .bubble {
+        background: #95ec69;
+        
+        &::before {
+          left: auto;
+          right: -16rpx;
+          border-color: transparent transparent transparent #95ec69;
+        }
+      }
+    }
+  }
+  
+  .avatar {
+    width: 80rpx;
+    height: 80rpx;
+    border-radius: 8rpx;
+    background: #eee;
+  }
+  
+  .content {
+    flex: 1;
+    margin: 0 100rpx 0 20rpx;
     display: flex;
-    align-items: flex-start;
-
-    // 头像样式
-    .avatar {
-        width: 80rpx;
-        height: 80rpx;
-        border-radius: 12rpx;
-        background-color: #f5f6fa;
+    flex-direction: column;
+    
+    .sender-name {
+      font-size: 24rpx;
+      color: #999;
+      margin-bottom: 8rpx;
     }
-
-    // 内容容器样式
-    .content-wrapper {
-        max-width: 60%;
-        margin: 0 20rpx;
+    
+    .bubble {
+      position: relative;
+      max-width: 60%;
+      background: #fff;
+      border-radius: 8rpx;
+      padding: 20rpx;
+      
+      &::before {
+        content: '';
+        position: absolute;
+        top: 20rpx;
+        left: -16rpx;
+        border: 8rpx solid;
+        border-color: transparent #fff transparent transparent;
+      }
+      
+      &.sending {
+        opacity: 0.6;
+      }
+      
+      &.failed {
+        background: #fef0f0;
+      }
+      
+      .text-content {
+        font-size: 28rpx;
+        color: #333;
+        line-height: 1.4;
+        word-break: break-all;
+      }
+      
+      .image-content {
+        max-width: 400rpx;
+        border-radius: 8rpx;
+        
+        &.loading {
+          width: 200rpx;
+          height: 200rpx;
+          background: #f5f5f5;
+        }
+      }
+      
+      .voice-content {
         display: flex;
-        flex-direction: column;
-
-        // 发送者名称
-        .sender-name {
-            font-size: 24rpx;
-            color: #636e72;
-            margin-bottom: 8rpx;
+        align-items: center;
+        min-width: 120rpx;
+        
+        .duration {
+          font-size: 24rpx;
+          color: #999;
+          margin-right: 10rpx;
         }
-
-        // 消息内容
-        .content {
-            position: relative;
-            background-color: #fff;
-            border-radius: 12rpx;
-            padding: 20rpx;
-            word-break: break-all;
-
-            &.has-status {
-                padding-right: 60rpx;
-            }
-
-            // 文本消息
-            .text-content {
-                font-size: 32rpx;
-                line-height: 1.5;
-                color: #2d3436;
-            }
-
-            // 图片消息
-            .image-content {
-                max-width: 400rpx;
-                border-radius: 12rpx;
-            }
-
-            // 文件消息
-            .file-content {
-                display: flex;
-                align-items: center;
-                padding: 20rpx;
-                background-color: #f5f6fa;
-                border-radius: 12rpx;
-
-                .iconfont {
-                    font-size: 48rpx;
-                    color: #6c5ce7;
-                    margin-right: 20rpx;
-
-                    &.icon-download {
-                        margin-right: 0;
-                        margin-left: 20rpx;
-                        font-size: 36rpx;
-                        color: #b2bec3;
-                    }
-                }
-
-                .file-info {
-                    flex: 1;
-                    overflow: hidden;
-
-                    .file-name {
-                        font-size: 28rpx;
-                        color: #2d3436;
-                        @include text-ellipsis;
-                    }
-
-                    .file-size {
-                        font-size: 24rpx;
-                        color: #636e72;
-                        margin-top: 4rpx;
-                    }
-                }
-            }
-
-            // 消息状态
-            .message-status {
-                position: absolute;
-                right: 12rpx;
-                bottom: 12rpx;
-                
-                .status-sending {
-                    .loading {
-                        font-size: 32rpx;
-                        color: #b2bec3;
-                        animation: rotate 1s linear infinite;
-                    }
-                }
-
-                .status-failed {
-                    .icon-warning {
-                        font-size: 32rpx;
-                        color: #ff7675;
-                    }
-                }
-            }
+        
+        .voice-icon {
+          .iconfont {
+            font-size: 40rpx;
+            color: #666;
+          }
+          
+          &.playing {
+            animation: voicePlay 1s infinite;
+          }
         }
-
-        // 消息时间
-        .time {
-            font-size: 24rpx;
-            color: #b2bec3;
-            margin-top: 8rpx;
-            align-self: center;
+      }
+      
+      .status {
+        position: absolute;
+        right: -48rpx;
+        bottom: 0;
+        
+        .iconfont {
+          font-size: 32rpx;
+          
+          &.loading {
+            color: #999;
+            animation: rotate 1s linear infinite;
+          }
+          
+          &.failed {
+            color: #ff4d4f;
+          }
         }
+      }
     }
-
-    // 自己发送的消息样式
-    &.self {
-        flex-direction: row-reverse;
-
-        .content {
-            background-color: #6c5ce7;
-
-            .text-content {
-                color: #fff;
-            }
-        }
+    
+    .time {
+      font-size: 24rpx;
+      color: #999;
+      margin-top: 8rpx;
     }
+  }
 }
 
-// 加载动画
 @keyframes rotate {
-    from { transform: rotate(0deg); }
-    to { transform: rotate(360deg); }
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
-</style> 
+
+@keyframes voicePlay {
+  0% { opacity: 1; }
+  50% { opacity: 0.5; }
+  100% { opacity: 1; }
+}
+</style>

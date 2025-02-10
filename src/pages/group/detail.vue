@@ -1,601 +1,589 @@
 <template>
-    <view class="group-detail">
-        <!-- 基本信息卡片 -->
-        <view class="info-card">
-            <view class="avatar-section" @tap="handleChangeAvatar">
-                <image class="avatar" :src="groupInfo.avatar || defaultGroupAvatar" mode="aspectFill" />
-                <view class="change-text" v-if="isOwner">更换群头像</view>
-            </view>
-            <view class="info-section">
-                <view class="name-row">
-                    <text class="name">{{ groupInfo.name }}</text>
-                    <text class="id">ID: {{ groupInfo.id }}</text>
-                </view>
-                <view class="member-count">
-                    {{ groupInfo.memberCount }}/{{ groupInfo.maxMembers }}人
-                </view>
-            </view>
-        </view>
-
-        <!-- 群公告 -->
-        <view class="announcement-card">
-            <view class="card-header">
-                <text class="title">群公告</text>
-                <text class="edit" v-if="isOwnerOrAdmin" @tap="handleEditAnnouncement">编辑</text>
-            </view>
-            <view class="content">
-                {{ groupInfo.announcement || '暂无群公告' }}
-            </view>
-        </view>
-
-        <!-- 群成员列表 -->
-        <view class="members-card">
-            <view class="card-header">
-                <text class="title">群成员</text>
-                <text class="manage" v-if="isOwnerOrAdmin" @tap="handleManageMembers">管理</text>
-            </view>
-            <view class="member-grid">
-                <view 
-                    v-for="member in members" 
-                    :key="member.userId" 
-                    class="member-item"
-                    @tap="handleMemberTap(member)"
-                >
-                    <image class="avatar" :src="member.avatar || defaultAvatar" mode="aspectFill" />
-                    <text class="nickname">{{ member.nickname }}</text>
-                    <text class="role-tag" v-if="member.role === GroupRole.OWNER">群主</text>
-                    <text class="role-tag admin" v-else-if="member.role === GroupRole.ADMIN">管理员</text>
-                </view>
-                <view class="member-item add" v-if="canInvite" @tap="handleInviteMembers">
-                    <text class="iconfont icon-add"></text>
-                    <text class="text">邀请</text>
-                </view>
-            </view>
-        </view>
-
-        <!-- 功能按钮组 -->
-        <view class="function-group">
-            <button class="function-btn" @tap="handleClearHistory">清空聊天记录</button>
-            <button class="function-btn warning" @tap="handleQuitGroup">
-                {{ isOwner ? '解散群组' : '退出群组' }}
-            </button>
-        </view>
-
-        <!-- 编辑公告弹窗 -->
-        <uni-popup ref="announcementPopup" type="center">
-            <view class="edit-popup">
-                <view class="popup-header">
-                    <text class="title">编辑群公告</text>
-                    <text class="close" @tap="closeAnnouncementPopup">×</text>
-                </view>
-                <view class="popup-content">
-                    <textarea
-                        v-model="editingAnnouncement"
-                        class="announcement-input"
-                        placeholder="请输入群公告"
-                        maxlength="200"
-                    />
-                    <text class="word-count">{{ editingAnnouncement.length }}/200</text>
-                </view>
-                <view class="popup-footer">
-                    <button class="cancel-btn" @tap="closeAnnouncementPopup">取消</button>
-                    <button class="confirm-btn" @tap="submitAnnouncement">确定</button>
-                </view>
-            </view>
-        </uni-popup>
+  <view class="group-detail">
+    <!-- 基本信息区域 -->
+    <view class="info-section">
+      <view class="avatar-box" @tap="changeGroupAvatar" v-if="canModifyGroupInfo">
+        <image :src="groupInfo.avatar" class="avatar" />
+        <text class="change-text">更换群头像</text>
+      </view>
+      <image v-else :src="groupInfo.avatar" class="avatar" />
+      
+      <view class="group-name" @tap="showNameEdit" v-if="canModifyGroupInfo">
+        <text>{{ groupInfo.name }}</text>
+        <text class="iconfont icon-edit"></text>
+      </view>
+      <text v-else class="group-name">{{ groupInfo.name }}</text>
+      
+      <text class="group-id">群号：{{ groupInfo.id }}</text>
     </view>
+
+    <!-- 群公告区域 -->
+    <view class="announcement-section" @tap="showAnnouncementEdit" v-if="canModifyGroupInfo">
+      <view class="section-title">群公告</view>
+      <view class="announcement-content">
+        {{ groupInfo.announcement || '暂无群公告，点击编辑' }}
+      </view>
+    </view>
+    <view class="announcement-section" v-else>
+      <view class="section-title">群公告</view>
+      <view class="announcement-content">
+        {{ groupInfo.announcement || '暂无群公告' }}
+      </view>
+    </view>
+
+    <!-- 群成员区域 -->
+    <view class="members-section" @tap="navigateToMembers">
+      <view class="section-title">群成员</view>
+      <view class="members-preview">
+        <view class="member-count">
+          共{{ groupInfo.memberCount }}人
+        </view>
+        <view class="members-avatars">
+          <image 
+            v-for="member in previewMembers" 
+            :key="member.userId"
+            :src="member.avatar"
+            class="member-avatar"
+          />
+        </view>
+        <text class="iconfont icon-right"></text>
+      </view>
+    </view>
+
+    <!-- 群设置区域 -->
+    <view class="settings-section">
+      <view class="setting-item">
+        <text>消息免打扰</text>
+        <switch 
+          :checked="isNoDisturb" 
+          @change="toggleNoDisturb" 
+          color="#07c160"
+        />
+      </view>
+      <view class="setting-item">
+        <text>置顶聊天</text>
+        <switch 
+          :checked="isTop" 
+          @change="toggleTop" 
+          color="#07c160"
+        />
+      </view>
+      <view class="setting-item" @tap="clearHistory">
+        <text>清空聊天记录</text>
+        <text class="iconfont icon-right"></text>
+      </view>
+    </view>
+
+    <!-- 退出群聊按钮 -->
+    <view class="quit-section">
+      <button 
+        class="quit-btn"
+        :class="{ 'dismiss': isOwner }"
+        @tap="quitGroup"
+      >
+        {{ isOwner ? '解散群聊' : '退出群聊' }}
+      </button>
+    </view>
+
+    <!-- 群名称编辑弹窗 -->
+    <uni-popup ref="namePopup" type="dialog">
+      <uni-popup-dialog
+        title="修改群名称"
+        :value="newGroupName"
+        placeholder="请输入新的群名称"
+        @confirm="confirmNameChange"
+      />
+    </uni-popup>
+
+    <!-- 群公告编辑弹窗 -->
+    <uni-popup ref="announcementPopup" type="dialog">
+      <uni-popup-dialog
+        title="修改群公告"
+        :value="newAnnouncement"
+        type="textarea"
+        placeholder="请输入群公告"
+        @confirm="confirmAnnouncementChange"
+      />
+    </uni-popup>
+  </view>
 </template>
 
-<script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
-import { useUserStore } from '@/stores/user';
-import { GroupRole, type GroupInfo, type GroupMember } from '@/types/group';
+<script lang="ts">
+import { defineComponent } from 'vue'
+import { GroupInfo, GroupMember } from '../../types/group'
+import { request } from '../../utils/request'
+import { useUserStore } from '../../stores/user'
+import { useChatStore } from '../../stores/chat'
 
-const userStore = useUserStore();
-const defaultAvatar = '/static/images/avatar/default.png';
-const defaultGroupAvatar = '/static/images/avatar/group.png';
+export default defineComponent({
+  name: 'GroupDetail',
 
-// 群组信息
-const groupInfo = ref<GroupInfo>({
-    id: '',
-    name: '',
-    avatar: '',
-    description: '',
-    owner: 0,
-    type: 1,
-    memberCount: 0,
-    maxMembers: 500,
-    createTime: 0,
-    joinMode: 0
-});
-
-// 群成员列表
-const members = ref<GroupMember[]>([]);
-
-// 编辑公告
-const editingAnnouncement = ref('');
-const announcementPopup = ref();
-
-// 是否是群主
-const isOwner = computed(() => {
-    return groupInfo.value.owner === userStore.userInfo?.userid;
-});
-
-// 是否是群主或管理员
-const isOwnerOrAdmin = computed(() => {
-    const currentMember = members.value.find(m => m.userId === userStore.userInfo?.userid);
-    return currentMember?.role === GroupRole.OWNER || currentMember?.role === GroupRole.ADMIN;
-});
-
-// 是否可以邀请成员
-const canInvite = computed(() => {
-    return isOwnerOrAdmin.value || groupInfo.value.joinMode === 0;
-});
-
-/**
- * 加载群组信息
- */
-const loadGroupInfo = async () => {
-    try {
-        // TODO: 通过 WebSocket 获取群组信息
-        // const response = await getGroupInfo(groupId);
-        // groupInfo.value = response.data;
-    } catch (error) {
-        console.error('加载群组信息失败:', error);
-        uni.showToast({
-            title: '加载失败',
-            icon: 'none'
-        });
+  data() {
+    return {
+      groupInfo: {
+        id: '',
+        name: '',
+        avatar: '',
+        memberCount: 0,
+        maxMemberCount: 500,
+        createTime: 0,
+        owner: '',
+        admins: [],
+        memberList: [],
+        announcement: ''
+      } as GroupInfo,
+      currentUserId: '',
+      isNoDisturb: false,
+      isTop: false,
+      newGroupName: '',
+      newAnnouncement: '',
+      previewMembers: [] as GroupMember[]
     }
-};
+  },
 
-/**
- * 加载群成员列表
- */
-const loadMembers = async () => {
-    try {
-        // TODO: 通过 WebSocket 获取群成员列表
-        // const response = await getGroupMembers(groupId);
-        // members.value = response.data;
-    } catch (error) {
-        console.error('加载群成员失败:', error);
-        uni.showToast({
-            title: '加载失败',
-            icon: 'none'
-        });
+  computed: {
+    isOwner(): boolean {
+      return this.currentUserId === this.groupInfo.owner
+    },
+
+    isAdmin(): boolean {
+      return this.groupInfo.admins.includes(this.currentUserId)
+    },
+
+    canModifyGroupInfo(): boolean {
+      return this.isOwner || this.isAdmin
     }
-};
+  },
 
-/**
- * 处理更换群头像
- */
-const handleChangeAvatar = async () => {
-    if (!isOwner.value) return;
-    
-    // TODO: 实现群头像上传
-};
-
-/**
- * 处理编辑公告
- */
-const handleEditAnnouncement = () => {
-    editingAnnouncement.value = groupInfo.value.announcement || '';
-    announcementPopup.value.open();
-};
-
-/**
- * 关闭公告编辑弹窗
- */
-const closeAnnouncementPopup = () => {
-    announcementPopup.value.close();
-};
-
-/**
- * 提交公告
- */
-const submitAnnouncement = async () => {
-    try {
-        uni.showLoading({ title: '保存中...' });
-        // TODO: 通过 WebSocket 更新群公告
-        // await updateGroupAnnouncement(groupInfo.value.id, editingAnnouncement.value);
+  methods: {
+    async loadGroupInfo() {
+      try {
+        const response = await request({
+          url: `/api/group/${this.groupInfo.id}`,
+          method: 'GET'
+        })
         
-        groupInfo.value.announcement = editingAnnouncement.value;
-        closeAnnouncementPopup();
-        
+        if (response.code === 0 && response.data) {
+          this.groupInfo = response.data
+          // 获取预览成员（最多显示4个）
+          this.previewMembers = this.groupInfo.memberList.slice(0, 4)
+        } else {
+          throw new Error(response.message || '获取群信息失败')
+        }
+      } catch (e) {
         uni.showToast({
-            title: '保存成功',
+          title: e.message || '加载群信息失败',
+          icon: 'none'
+        })
+      }
+    },
+
+    async changeGroupAvatar() {
+      try {
+        const res = await uni.chooseImage({
+          count: 1,
+          sizeType: ['compressed'],
+          sourceType: ['album', 'camera']
+        })
+        
+        const tempFilePath = res.tempFilePaths[0]
+        
+        // 上传图片
+        const uploadRes = await uni.uploadFile({
+          url: '/api/upload',
+          filePath: tempFilePath,
+          name: 'file'
+        })
+        
+        const data = JSON.parse(uploadRes.data)
+        if (data.code === 0 && data.data) {
+          // 更新群头像
+          const response = await request({
+            url: `/api/group/${this.groupInfo.id}`,
+            method: 'PUT',
+            data: {
+              avatar: data.data.url
+            }
+          })
+          
+          if (response.code === 0) {
+            await this.loadGroupInfo()
+            uni.showToast({
+              title: '更新成功',
+              icon: 'success'
+            })
+          } else {
+            throw new Error(response.message || '更新失败')
+          }
+        }
+      } catch (e) {
+        uni.showToast({
+          title: e.message || '更换头像失败',
+          icon: 'none'
+        })
+      }
+    },
+
+    showNameEdit() {
+      this.newGroupName = this.groupInfo.name
+      this.$refs.namePopup.open()
+    },
+
+    async confirmNameChange(value: string) {
+      if (!value.trim()) {
+        uni.showToast({
+          title: '群名称不能为空',
+          icon: 'none'
+        })
+        return
+      }
+
+      try {
+        const response = await request({
+          url: `/api/group/${this.groupInfo.id}`,
+          method: 'PUT',
+          data: {
+            name: value.trim()
+          }
+        })
+        
+        if (response.code === 0) {
+          await this.loadGroupInfo()
+          uni.showToast({
+            title: '修改成功',
             icon: 'success'
-        });
-    } catch (error) {
-        console.error('更新公告失败:', error);
+          })
+        } else {
+          throw new Error(response.message || '修改失败')
+        }
+      } catch (e) {
         uni.showToast({
-            title: '保存失败',
-            icon: 'none'
-        });
-    } finally {
-        uni.hideLoading();
-    }
-};
+          title: e.message || '修改群名称失败',
+          icon: 'none'
+        })
+      }
+    },
 
-/**
- * 处理管理成员
- */
-const handleManageMembers = () => {
-    uni.navigateTo({
-        url: `/pages/group/members?id=${groupInfo.value.id}`
-    });
-};
+    showAnnouncementEdit() {
+      this.newAnnouncement = this.groupInfo.announcement
+      this.$refs.announcementPopup.open()
+    },
 
-/**
- * 处理邀请成员
- */
-const handleInviteMembers = () => {
-    uni.navigateTo({
-        url: `/pages/group/invite?id=${groupInfo.value.id}`
-    });
-};
+    async confirmAnnouncementChange(value: string) {
+      try {
+        const response = await request({
+          url: `/api/group/${this.groupInfo.id}`,
+          method: 'PUT',
+          data: {
+            announcement: value.trim()
+          }
+        })
+        
+        if (response.code === 0) {
+          await this.loadGroupInfo()
+          uni.showToast({
+            title: '修改成功',
+            icon: 'success'
+          })
+        } else {
+          throw new Error(response.message || '修改失败')
+        }
+      } catch (e) {
+        uni.showToast({
+          title: e.message || '修改群公告失败',
+          icon: 'none'
+        })
+      }
+    },
 
-/**
- * 处理成员点击
- */
-const handleMemberTap = (member: GroupMember) => {
-    if (member.userId === userStore.userInfo?.userid) return;
-    
-    uni.navigateTo({
-        url: `/pages/chat/index?type=single&id=${member.userId}&name=${member.nickname}`
-    });
-};
+    navigateToMembers() {
+      uni.navigateTo({
+        url: `/pages/group/members?groupId=${this.groupInfo.id}`
+      })
+    },
 
-/**
- * 处理清空聊天记录
- */
-const handleClearHistory = () => {
-    uni.showModal({
+    async toggleNoDisturb(e: any) {
+      const value = e.detail.value
+      try {
+        const chatStore = useChatStore()
+        await chatStore.updateSessionSetting(this.groupInfo.id, {
+          noDisturb: value
+        })
+        this.isNoDisturb = value
+      } catch (e) {
+        uni.showToast({
+          title: '设置失败',
+          icon: 'none'
+        })
+        // 还原开关状态
+        this.isNoDisturb = !value
+      }
+    },
+
+    async toggleTop(e: any) {
+      const value = e.detail.value
+      try {
+        const chatStore = useChatStore()
+        await chatStore.updateSessionSetting(this.groupInfo.id, {
+          isTop: value
+        })
+        this.isTop = value
+      } catch (e) {
+        uni.showToast({
+          title: '设置失败',
+          icon: 'none'
+        })
+        // 还原开关状态
+        this.isTop = !value
+      }
+    },
+
+    async clearHistory() {
+      uni.showModal({
         title: '提示',
         content: '确定要清空聊天记录吗？',
-        success: async (res) => {
-            if (res.confirm) {
-                try {
-                    uni.showLoading({ title: '清空中...' });
-                    // TODO: 通过 WebSocket 清空聊天记录
-                    // await clearGroupHistory(groupInfo.value.id);
-                    
-                    uni.showToast({
-                        title: '已清空',
-                        icon: 'success'
-                    });
-                } catch (error) {
-                    console.error('清空失败:', error);
-                    uni.showToast({
-                        title: '清空失败',
-                        icon: 'none'
-                    });
-                } finally {
-                    uni.hideLoading();
-                }
+        async success: (res) => {
+          if (res.confirm) {
+            try {
+              const chatStore = useChatStore()
+              await chatStore.clearMessages(this.groupInfo.id)
+              uni.showToast({
+                title: '已清空',
+                icon: 'success'
+              })
+            } catch (e) {
+              uni.showToast({
+                title: '清空失败',
+                icon: 'none'
+              })
             }
+          }
         }
-    });
-};
+      })
+    },
 
-/**
- * 处理退出/解散群组
- */
-const handleQuitGroup = () => {
-    const action = isOwner.value ? '解散' : '退出';
-    uni.showModal({
+    async quitGroup() {
+      const action = this.isOwner ? '解散' : '退出'
+      uni.showModal({
         title: '提示',
-        content: `确定要${action}该群组吗？`,
-        success: async (res) => {
-            if (res.confirm) {
-                try {
-                    uni.showLoading({ title: `${action}中...` });
-                    // TODO: 通过 WebSocket 退出/解散群组
-                    // if (isOwner.value) {
-                    //     await dismissGroup(groupInfo.value.id);
-                    // } else {
-                    //     await quitGroup(groupInfo.value.id);
-                    // }
-                    
-                    uni.showToast({
-                        title: `${action}成功`,
-                        icon: 'success'
-                    });
-                    
-                    setTimeout(() => {
-                        uni.navigateBack();
-                    }, 1500);
-                } catch (error) {
-                    console.error(`${action}失败:`, error);
-                    uni.showToast({
-                        title: `${action}失败`,
-                        icon: 'none'
-                    });
-                } finally {
-                    uni.hideLoading();
-                }
+        content: `确定要${action}该群聊吗？`,
+        async success: (res) => {
+          if (res.confirm) {
+            try {
+              const response = await request({
+                url: `/api/group/${this.groupInfo.id}/${this.isOwner ? 'dismiss' : 'quit'}`,
+                method: 'POST'
+              })
+              
+              if (response.code === 0) {
+                const chatStore = useChatStore()
+                await chatStore.removeSession(this.groupInfo.id)
+                
+                uni.showToast({
+                  title: `${action}成功`,
+                  icon: 'success'
+                })
+                
+                setTimeout(() => {
+                  uni.switchTab({
+                    url: '/pages/chats/index'
+                  })
+                }, 1500)
+              } else {
+                throw new Error(response.message || `${action}失败`)
+              }
+            } catch (e) {
+              uni.showToast({
+                title: e.message || `${action}失败`,
+                icon: 'none'
+              })
             }
+          }
         }
-    });
-};
+      })
+    }
+  },
 
-// 页面加载
-onLoad(async (options: any) => {
-    const { id } = options;
-    if (!id) {
-        uni.showToast({
-            title: '参数错误',
-            icon: 'none'
-        });
-        uni.navigateBack();
-        return;
+  async onLoad(options: any) {
+    const userStore = useUserStore()
+    this.currentUserId = userStore.userInfo.id
+    this.groupInfo.id = options.groupId
+    
+    // 加载群设置
+    const chatStore = useChatStore()
+    const session = chatStore.sessions.find(s => s.id === this.groupInfo.id)
+    if (session) {
+      this.isNoDisturb = session.noDisturb || false
+      this.isTop = session.isTop || false
     }
     
-    groupInfo.value.id = id;
-    await Promise.all([
-        loadGroupInfo(),
-        loadMembers()
-    ]);
-});
+    await this.loadGroupInfo()
+  }
+})
 </script>
 
 <style lang="scss">
 .group-detail {
-    min-height: 100vh;
-    background-color: #f8f9fa;
-    padding: 20rpx;
+  min-height: 100vh;
+  background: #f5f5f5;
+  padding-bottom: 40rpx;
 
-    .info-card {
-        background-color: #fff;
+  .info-section {
+    background: #fff;
+    padding: 40rpx;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin-bottom: 20rpx;
+
+    .avatar-box {
+      position: relative;
+      margin-bottom: 20rpx;
+
+      .avatar {
+        width: 160rpx;
+        height: 160rpx;
         border-radius: 20rpx;
-        padding: 30rpx;
-        margin-bottom: 20rpx;
+      }
+
+      .change-text {
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        background: rgba(0, 0, 0, 0.5);
+        color: #fff;
+        font-size: 24rpx;
+        text-align: center;
+        padding: 8rpx 0;
+        border-bottom-left-radius: 20rpx;
+        border-bottom-right-radius: 20rpx;
+      }
+    }
+
+    .avatar {
+      width: 160rpx;
+      height: 160rpx;
+      border-radius: 20rpx;
+      margin-bottom: 20rpx;
+    }
+
+    .group-name {
+      font-size: 36rpx;
+      font-weight: 500;
+      margin-bottom: 10rpx;
+      display: flex;
+      align-items: center;
+
+      .icon-edit {
+        font-size: 32rpx;
+        color: #999;
+        margin-left: 10rpx;
+      }
+    }
+
+    .group-id {
+      font-size: 28rpx;
+      color: #999;
+    }
+  }
+
+  .announcement-section,
+  .members-section,
+  .settings-section {
+    background: #fff;
+    margin-bottom: 20rpx;
+    padding: 0 30rpx;
+
+    .section-title {
+      font-size: 32rpx;
+      font-weight: 500;
+      padding: 30rpx 0;
+      border-bottom: 1rpx solid #eee;
+    }
+  }
+
+  .announcement-section {
+    .announcement-content {
+      padding: 30rpx 0;
+      font-size: 28rpx;
+      color: #666;
+      line-height: 1.6;
+    }
+  }
+
+  .members-section {
+    .members-preview {
+      padding: 30rpx 0;
+      display: flex;
+      align-items: center;
+
+      .member-count {
+        font-size: 28rpx;
+        color: #666;
+        margin-right: 20rpx;
+      }
+
+      .members-avatars {
+        flex: 1;
         display: flex;
-        align-items: center;
-
-        .avatar-section {
-            position: relative;
-            margin-right: 30rpx;
-
-            .avatar {
-                width: 120rpx;
-                height: 120rpx;
-                border-radius: 20rpx;
-            }
-
-            .change-text {
-                position: absolute;
-                left: 0;
-                right: 0;
-                bottom: 0;
-                height: 40rpx;
-                background: rgba(0, 0, 0, 0.5);
-                color: #fff;
-                font-size: 20rpx;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                border-bottom-left-radius: 20rpx;
-                border-bottom-right-radius: 20rpx;
-            }
+        
+        .member-avatar {
+          width: 80rpx;
+          height: 80rpx;
+          border-radius: 10rpx;
+          margin-right: 20rpx;
         }
+      }
 
-        .info-section {
-            flex: 1;
-
-            .name-row {
-                margin-bottom: 10rpx;
-
-                .name {
-                    font-size: 36rpx;
-                    color: #2d3436;
-                    font-weight: bold;
-                    margin-right: 20rpx;
-                }
-
-                .id {
-                    font-size: 24rpx;
-                    color: #8a8a8a;
-                }
-            }
-
-            .member-count {
-                font-size: 26rpx;
-                color: #636e72;
-            }
-        }
+      .icon-right {
+        font-size: 32rpx;
+        color: #999;
+      }
     }
+  }
 
-    .announcement-card, .members-card {
-        background-color: #fff;
-        border-radius: 20rpx;
-        padding: 30rpx;
-        margin-bottom: 20rpx;
+  .settings-section {
+    .setting-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 30rpx 0;
+      font-size: 32rpx;
+      border-bottom: 1rpx solid #eee;
 
-        .card-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 20rpx;
+      &:last-child {
+        border-bottom: none;
+      }
 
-            .title {
-                font-size: 32rpx;
-                color: #2d3436;
-                font-weight: bold;
-            }
-
-            .edit, .manage {
-                font-size: 28rpx;
-                color: #6c5ce7;
-            }
-        }
-
-        .content {
-            font-size: 28rpx;
-            color: #636e72;
-            line-height: 1.6;
-        }
+      .icon-right {
+        font-size: 32rpx;
+        color: #999;
+      }
     }
+  }
 
-    .members-card {
-        .member-grid {
-            display: grid;
-            grid-template-columns: repeat(5, 1fr);
-            gap: 20rpx;
+  .quit-section {
+    padding: 40rpx 30rpx;
 
-            .member-item {
-                display: flex;
-                flex-direction: column;
-                align-items: center;
-                position: relative;
+    .quit-btn {
+      width: 100%;
+      height: 88rpx;
+      line-height: 88rpx;
+      text-align: center;
+      background: #ff4d4f;
+      color: #fff;
+      font-size: 32rpx;
+      border-radius: 10rpx;
 
-                .avatar {
-                    width: 100rpx;
-                    height: 100rpx;
-                    border-radius: 50rpx;
-                    margin-bottom: 10rpx;
-                }
+      &.dismiss {
+        background: #ff4d4f;
+      }
 
-                .nickname {
-                    font-size: 24rpx;
-                    color: #2d3436;
-                    width: 100%;
-                    text-align: center;
-                    @include text-ellipsis;
-                }
-
-                .role-tag {
-                    position: absolute;
-                    right: 0;
-                    top: 0;
-                    padding: 4rpx 8rpx;
-                    background-color: #6c5ce7;
-                    border-radius: 8rpx;
-                    font-size: 20rpx;
-                    color: #fff;
-
-                    &.admin {
-                        background-color: #00b894;
-                    }
-                }
-
-                &.add {
-                    .iconfont {
-                        width: 100rpx;
-                        height: 100rpx;
-                        background-color: #f5f6fa;
-                        border-radius: 50rpx;
-                        display: flex;
-                        align-items: center;
-                        justify-content: center;
-                        font-size: 40rpx;
-                        color: #8a8a8a;
-                        margin-bottom: 10rpx;
-                    }
-
-                    .text {
-                        font-size: 24rpx;
-                        color: #8a8a8a;
-                    }
-                }
-            }
-        }
+      &:active {
+        opacity: 0.8;
+      }
     }
-
-    .function-group {
-        margin-top: 40rpx;
-
-        .function-btn {
-            width: 100%;
-            height: 90rpx;
-            background-color: #fff;
-            border-radius: 45rpx;
-            color: #2d3436;
-            font-size: 32rpx;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            margin-bottom: 20rpx;
-
-            &.warning {
-                background-color: #ff3b30;
-                color: #fff;
-            }
-        }
-    }
-
-    .edit-popup {
-        width: 600rpx;
-        background-color: #fff;
-        border-radius: 20rpx;
-        overflow: hidden;
-
-        .popup-header {
-            padding: 30rpx;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            border-bottom: 2rpx solid #f5f6fa;
-
-            .title {
-                font-size: 32rpx;
-                color: #2d3436;
-                font-weight: bold;
-            }
-
-            .close {
-                font-size: 40rpx;
-                color: #8a8a8a;
-                padding: 0 20rpx;
-            }
-        }
-
-        .popup-content {
-            padding: 30rpx;
-            position: relative;
-
-            .announcement-input {
-                width: 100%;
-                height: 300rpx;
-                background-color: #f5f6fa;
-                border-radius: 12rpx;
-                padding: 20rpx;
-                font-size: 28rpx;
-            }
-
-            .word-count {
-                position: absolute;
-                right: 40rpx;
-                bottom: 40rpx;
-                font-size: 24rpx;
-                color: #8a8a8a;
-            }
-        }
-
-        .popup-footer {
-            display: flex;
-            border-top: 2rpx solid #f5f6fa;
-
-            button {
-                flex: 1;
-                height: 90rpx;
-                font-size: 32rpx;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                border-radius: 0;
-
-                &.cancel-btn {
-                    background-color: #fff;
-                    color: #636e72;
-                }
-
-                &.confirm-btn {
-                    background: linear-gradient(45deg, #6c5ce7, #a363d9);
-                    color: #fff;
-                }
-            }
-        }
-    }
+  }
 }
-</style> 
+</style>
