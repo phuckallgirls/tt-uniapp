@@ -1,424 +1,375 @@
 <template>
-    <view class="members-manager">
-        <!-- 搜索栏 -->
-        <view class="search-box">
-            <text class="iconfont icon-search"></text>
-            <input
-                v-model="searchText"
-                class="search-input"
-                type="text"
-                placeholder="搜索群成员"
-                @confirm="handleSearch"
-            />
-        </view>
-
-        <!-- 成员列表 -->
-        <scroll-view
-            class="member-list"
-            scroll-y
-            :refresher-enabled="true"
-            :refresher-triggered="isRefreshing"
-            @refresherrefresh="handleRefresh"
-            @scrolltolower="handleLoadMore"
-        >
-            <view 
-                v-for="member in members"
-                :key="member.userId"
-                class="member-item"
-                @tap="handleMemberTap(member)"
-            >
-                <image class="avatar" :src="member.avatar || defaultAvatar" mode="aspectFill" />
-                <view class="info">
-                    <view class="name-row">
-                        <text class="nickname">{{ member.nickname }}</text>
-                        <text class="role-tag" :class="getRoleClass(member.role)">
-                            {{ getRoleText(member.role) }}
-                        </text>
-                    </view>
-                    <text class="join-time">加入时间：{{ formatTime(member.joinTime) }}</text>
-                </view>
-                <view class="actions" v-if="canManageMember(member)">
-                    <button 
-                        class="action-btn"
-                        :class="{ 'admin': member.role === GroupRole.ADMIN }"
-                        @tap.stop="handleSetAdmin(member)"
-                    >
-                        {{ member.role === GroupRole.ADMIN ? '取消管理员' : '设为管理员' }}
-                    </button>
-                    <button 
-                        class="action-btn remove"
-                        @tap.stop="handleRemoveMember(member)"
-                    >
-                        移出群组
-                    </button>
-                </view>
-            </view>
-
-            <!-- 加载更多 -->
-            <view v-if="hasMore" class="loading-more">
-                <text v-if="isLoading">正在加载...</text>
-                <text v-else>上拉加载更多</text>
-            </view>
-            <view v-else class="no-more">
-                <text>没有更多了</text>
-            </view>
-        </scroll-view>
+  <view class="members-container">
+    <!-- 搜索框 -->
+    <view class="search-box">
+      <input 
+        v-model="searchKey" 
+        type="text" 
+        placeholder="搜索群成员" 
+        @input="onSearch"
+      />
     </view>
+
+    <!-- 管理员区域 -->
+    <view class="admin-section" v-if="isOwnerOrAdmin">
+      <view class="section-title">管理员</view>
+      <view class="member-list">
+        <view 
+          class="member-item" 
+          v-for="member in adminMembers" 
+          :key="member.userId"
+        >
+          <image :src="member.avatar" class="avatar" />
+          <view class="info">
+            <text class="nickname">{{ member.nickname }}</text>
+            <text class="role">{{ member.userId === groupInfo.owner ? '群主' : '管理员' }}</text>
+          </view>
+          <view 
+            class="action" 
+            v-if="isOwner && member.userId !== groupInfo.owner"
+          >
+            <button @click="removeAdmin(member)">移除管理员</button>
+          </view>
+        </view>
+      </view>
+    </view>
+
+    <!-- 普通成员区域 -->
+    <view class="member-section">
+      <view class="section-title">
+        成员 ({{ normalMembers.length }})
+      </view>
+      <view class="member-list">
+        <view 
+          class="member-item" 
+          v-for="member in filteredMembers" 
+          :key="member.userId"
+        >
+          <image :src="member.avatar" class="avatar" />
+          <view class="info">
+            <text class="nickname">{{ member.nickname }}</text>
+            <text class="active-time">
+              最后活跃: {{ formatTime(member.lastActiveTime) }}
+            </text>
+          </view>
+          <view class="action" v-if="canManageMembers">
+            <button 
+              v-if="isOwner" 
+              @click="setAdmin(member)"
+            >设为管理员</button>
+            <button 
+              class="remove" 
+              @click="removeMember(member)"
+            >移除</button>
+          </view>
+        </view>
+      </view>
+    </view>
+  </view>
 </template>
 
-<script setup lang="ts">
-import { ref, computed } from 'vue';
-import { useUserStore } from '@/stores/user';
-import { GroupRole, type GroupMember } from '@/types/group';
-import dayjs from 'dayjs';
+<script lang="ts">
+import { defineComponent } from 'vue'
+import { GroupInfo, GroupMember, GroupPermission } from '../../types/group'
+import { request } from '../../utils/request'
+import { useUserStore } from '../../stores/user'
 
-const userStore = useUserStore();
-const defaultAvatar = '/static/images/avatar/default.png';
-
-// 搜索文本
-const searchText = ref('');
-// 成员列表
-const members = ref<GroupMember[]>([]);
-// 是否正在刷新
-const isRefreshing = ref(false);
-// 是否正在加载更多
-const isLoading = ref(false);
-// 是否还有更多数据
-const hasMore = ref(true);
-// 当前用户角色
-const currentRole = ref<GroupRole>(GroupRole.MEMBER);
-
-/**
- * 获取角色文本
- */
-const getRoleText = (role: GroupRole): string => {
-    const roleMap = {
-        [GroupRole.OWNER]: '群主',
-        [GroupRole.ADMIN]: '管理员',
-        [GroupRole.MEMBER]: '成员'
-    };
-    return roleMap[role];
-};
-
-/**
- * 获取角色样式类
- */
-const getRoleClass = (role: GroupRole): string => {
-    const classMap = {
-        [GroupRole.OWNER]: 'owner',
-        [GroupRole.ADMIN]: 'admin',
-        [GroupRole.MEMBER]: ''
-    };
-    return classMap[role];
-};
-
-/**
- * 格式化时间
- */
-const formatTime = (timestamp: number): string => {
-    return dayjs(timestamp).format('YYYY-MM-DD HH:mm');
-};
-
-/**
- * 是否可以管理该成员
- */
-const canManageMember = (member: GroupMember): boolean => {
-    // 群主可以管理所有人（除了自己）
-    if (currentRole.value === GroupRole.OWNER) {
-        return member.userId !== userStore.userInfo?.userid;
+export default defineComponent({
+  name: 'GroupMembers',
+  
+  data() {
+    return {
+      searchKey: '',
+      groupInfo: {
+        id: '',
+        name: '',
+        avatar: '',
+        memberCount: 0,
+        maxMemberCount: 500,
+        createTime: 0,
+        owner: '',
+        admins: [],
+        memberList: [],
+        announcement: '',
+        lastActiveTime: 0
+      } as GroupInfo,
+      currentUserId: '',
+      permission: {
+        canManageMembers: false,
+        canModifyGroupInfo: false,
+        canRemoveMembers: false
+      } as GroupPermission
     }
-    // 管理员可以管理普通成员
-    if (currentRole.value === GroupRole.ADMIN) {
-        return member.role === GroupRole.MEMBER;
-    }
-    return false;
-};
+  },
 
-/**
- * 处理搜索
- */
-const handleSearch = async () => {
-    if (!searchText.value.trim()) {
-        return;
-    }
-    try {
-        uni.showLoading({ title: '搜索中...' });
-        // TODO: 通过 WebSocket 搜索群成员
-        // const response = await searchGroupMembers(groupId, searchText.value);
-        // members.value = response.data;
-    } catch (error) {
-        console.error('搜索失败:', error);
-        uni.showToast({
-            title: '搜索失败',
-            icon: 'none'
-        });
-    } finally {
-        uni.hideLoading();
-    }
-};
+  computed: {
+    isOwner(): boolean {
+      return this.currentUserId === this.groupInfo.owner
+    },
 
-/**
- * 处理刷新
- */
-const handleRefresh = async () => {
-    if (isRefreshing.value) return;
-    isRefreshing.value = true;
-    try {
-        // TODO: 通过 WebSocket 获取群成员列表
-        // const response = await getGroupMembers(groupId);
-        // members.value = response.data;
-        hasMore.value = true;
-    } finally {
-        isRefreshing.value = false;
-        uni.stopPullDownRefresh();
+    isOwnerOrAdmin(): boolean {
+      return this.isOwner || this.groupInfo.admins.includes(this.currentUserId)
+    },
+
+    canManageMembers(): boolean {
+      return this.permission.canManageMembers
+    },
+
+    adminMembers(): GroupMember[] {
+      return this.groupInfo.memberList.filter(member => 
+        member.role === 'admin' || member.userId === this.groupInfo.owner
+      ).sort((a, b) => {
+        // 群主始终排在第一位
+        if (a.userId === this.groupInfo.owner) return -1
+        if (b.userId === this.groupInfo.owner) return 1
+        return b.lastActiveTime || 0 - (a.lastActiveTime || 0)
+      })
+    },
+
+    normalMembers(): GroupMember[] {
+      return this.groupInfo.memberList.filter(member => 
+        member.role === 'member'
+      ).sort((a, b) => (b.lastActiveTime || 0) - (a.lastActiveTime || 0))
+    },
+
+    filteredMembers(): GroupMember[] {
+      if (!this.searchKey) return this.normalMembers
+      const key = this.searchKey.toLowerCase()
+      return this.normalMembers.filter(member =>
+        member.nickname.toLowerCase().includes(key)
+      )
     }
-};
+  },
 
-/**
- * 处理加载更多
- */
-const handleLoadMore = async () => {
-    if (!hasMore.value || isLoading.value) return;
-    isLoading.value = true;
-    try {
-        // TODO: 通过 WebSocket 获取更多群成员
-        // const response = await getMoreGroupMembers(groupId, members.value.length);
-        // members.value.push(...response.data);
-        // hasMore.value = response.hasMore;
-    } finally {
-        isLoading.value = false;
-    }
-};
-
-/**
- * 处理成员点击
- */
-const handleMemberTap = (member: GroupMember) => {
-    if (member.userId === userStore.userInfo?.userid) return;
-    
-    uni.navigateTo({
-        url: `/pages/chat/index?type=single&id=${member.userId}&name=${member.nickname}`
-    });
-};
-
-/**
- * 处理设置管理员
- */
-const handleSetAdmin = async (member: GroupMember) => {
-    try {
-        uni.showLoading({ title: '处理中...' });
-        const newRole = member.role === GroupRole.ADMIN ? GroupRole.MEMBER : GroupRole.ADMIN;
-        // TODO: 通过 WebSocket 设置群成员角色
-        // await setGroupMemberRole(groupId, member.userId, newRole);
+  methods: {
+    async loadGroupInfo() {
+      try {
+        const response = await request({
+          url: `/api/group/${this.groupInfo.id}`,
+          method: 'GET'
+        })
         
-        // 更新本地数据
-        const index = members.value.findIndex(m => m.userId === member.userId);
-        if (index !== -1) {
-            members.value[index].role = newRole;
+        if (response.code === 0 && response.data) {
+          this.groupInfo = response.data
+          
+          // 设置权限
+          this.permission = {
+            canManageMembers: this.isOwnerOrAdmin,
+            canModifyGroupInfo: this.isOwnerOrAdmin,
+            canRemoveMembers: this.isOwnerOrAdmin
+          }
+        } else {
+          throw new Error(response.message || '获取群信息失败')
         }
-        
+      } catch (e) {
         uni.showToast({
+          title: e.message || '加载群信息失败',
+          icon: 'none'
+        })
+      }
+    },
+
+    formatTime(timestamp?: number): string {
+      if (!timestamp) return '未知'
+      const now = new Date()
+      const date = new Date(timestamp)
+      
+      if (now.getDate() === date.getDate()) {
+        return `今天 ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`
+      }
+      
+      if (now.getDate() - date.getDate() === 1) {
+        return `昨天 ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`
+      }
+      
+      return `${date.getMonth() + 1}/${date.getDate()} ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`
+    },
+
+    async setAdmin(member: GroupMember) {
+      try {
+        const response = await request({
+          url: `/api/group/${this.groupInfo.id}/admin`,
+          method: 'POST',
+          data: {
+            userId: member.userId
+          }
+        })
+        
+        if (response.code === 0) {
+          await this.loadGroupInfo()
+          uni.showToast({
             title: '设置成功',
             icon: 'success'
-        });
-    } catch (error) {
-        console.error('设置失败:', error);
-        uni.showToast({
-            title: '设置失败',
-            icon: 'none'
-        });
-    } finally {
-        uni.hideLoading();
-    }
-};
-
-/**
- * 处理移出成员
- */
-const handleRemoveMember = async (member: GroupMember) => {
-    uni.showModal({
-        title: '提示',
-        content: `确定要将 ${member.nickname} 移出群组吗？`,
-        async success(res) {
-            if (res.confirm) {
-                try {
-                    uni.showLoading({ title: '处理中...' });
-                    // TODO: 通过 WebSocket 移出群成员
-                    // await removeGroupMember(groupId, member.userId);
-                    
-                    // 更新本地数据
-                    members.value = members.value.filter(m => m.userId !== member.userId);
-                    
-                    uni.showToast({
-                        title: '移出成功',
-                        icon: 'success'
-                    });
-                } catch (error) {
-                    console.error('移出失败:', error);
-                    uni.showToast({
-                        title: '移出失败',
-                        icon: 'none'
-                    });
-                } finally {
-                    uni.hideLoading();
-                }
-            }
+          })
+        } else {
+          throw new Error(response.message || '设置失败')
         }
-    });
-};
-
-// 页面加载时获取数据
-onLoad(async (options) => {
-    const { id } = options;
-    if (!id) {
-        uni.navigateBack();
-        return;
-    }
-
-    try {
-        uni.showLoading({ title: '加载中...' });
-        // TODO: 通过 WebSocket 获取群成员列表和当前用户角色
-        // const [membersRes, roleRes] = await Promise.all([
-        //     getGroupMembers(id),
-        //     getCurrentUserRole(id)
-        // ]);
-        // members.value = membersRes.data;
-        // currentRole.value = roleRes.data;
-    } catch (error) {
-        console.error('加载失败:', error);
+      } catch (e) {
         uni.showToast({
-            title: '加载失败',
-            icon: 'none'
-        });
-        uni.navigateBack();
-    } finally {
-        uni.hideLoading();
+          title: e.message || '设置失败',
+          icon: 'none'
+        })
+      }
+    },
+
+    async removeAdmin(member: GroupMember) {
+      try {
+        const response = await request({
+          url: `/api/group/${this.groupInfo.id}/admin/${member.userId}`,
+          method: 'DELETE'
+        })
+        
+        if (response.code === 0) {
+          await this.loadGroupInfo()
+          uni.showToast({
+            title: '移除成功',
+            icon: 'success'
+          })
+        } else {
+          throw new Error(response.message || '移除失败')
+        }
+      } catch (e) {
+        uni.showToast({
+          title: e.message || '移除失败',
+          icon: 'none'
+        })
+      }
+    },
+
+    async removeMember(member: GroupMember) {
+      try {
+        const response = await request({
+          url: `/api/group/${this.groupInfo.id}/member/${member.userId}`,
+          method: 'DELETE'
+        })
+        
+        if (response.code === 0) {
+          await this.loadGroupInfo()
+          uni.showToast({
+            title: '移除成功',
+            icon: 'success'
+          })
+        } else {
+          throw new Error(response.message || '移除失败')
+        }
+      } catch (e) {
+        uni.showToast({
+          title: e.message || '移除失败',
+          icon: 'none'
+        })
+      }
+    },
+
+    onSearch() {
+      // 搜索是在前端进行的，不需要调用API
+      // 通过 computed 属性 filteredMembers 自动处理
     }
-});
+  },
+
+  async onLoad(options: any) {
+    const userStore = useUserStore()
+    this.currentUserId = userStore.userInfo.id
+    this.groupInfo.id = options.groupId
+    await this.loadGroupInfo()
+  }
+})
 </script>
 
 <style lang="scss">
-.members-manager {
-    min-height: 100vh;
-    background-color: #f8f9fa;
-    padding: 30rpx;
-
-    .search-box {
+.members-container {
+  padding: 20rpx;
+  background: #f5f5f5;
+  min-height: 100vh;
+  
+  .search-box {
+    padding: 20rpx;
+    background: #fff;
+    margin-bottom: 20rpx;
+    border-radius: 10rpx;
+    
+    input {
+      background: #f5f5f5;
+      padding: 20rpx;
+      border-radius: 10rpx;
+      font-size: 28rpx;
+      width: 100%;
+      box-sizing: border-box;
+    }
+  }
+  
+  .section-title {
+    font-size: 28rpx;
+    color: #666;
+    padding: 20rpx 0;
+    font-weight: 500;
+  }
+  
+  .member-list {
+    background: #fff;
+    border-radius: 10rpx;
+    
+    .member-item {
+      display: flex;
+      align-items: center;
+      padding: 20rpx;
+      border-bottom: 1rpx solid #eee;
+      
+      &:last-child {
+        border-bottom: none;
+      }
+      
+      .avatar {
+        width: 80rpx;
         height: 80rpx;
-        background-color: #fff;
-        border-radius: 40rpx;
+        border-radius: 50%;
+        margin-right: 20rpx;
+        background: #eee;
+      }
+      
+      .info {
+        flex: 1;
+        
+        .nickname {
+          font-size: 28rpx;
+          color: #333;
+          font-weight: 500;
+        }
+        
+        .role, .active-time {
+          font-size: 24rpx;
+          color: #999;
+          margin-top: 10rpx;
+          display: block;
+        }
+        
+        .role {
+          color: #576b95;
+        }
+      }
+      
+      .action {
         display: flex;
         align-items: center;
-        padding: 0 30rpx;
-        margin-bottom: 30rpx;
-
-        .icon-search {
-            font-size: 36rpx;
-            color: #8a8a8a;
-            margin-right: 20rpx;
+        
+        button {
+          font-size: 24rpx;
+          margin-left: 20rpx;
+          padding: 10rpx 20rpx;
+          background: #fff;
+          border: 1rpx solid #ddd;
+          border-radius: 8rpx;
+          
+          &.remove {
+            color: #ff4d4f;
+            border-color: #ff4d4f;
+          }
+          
+          &:active {
+            opacity: 0.7;
+          }
         }
-
-        .search-input {
-            flex: 1;
-            height: 100%;
-            font-size: 28rpx;
-        }
+      }
     }
-
-    .member-list {
-        height: calc(100vh - 140rpx);
-
-        .member-item {
-            background-color: #fff;
-            border-radius: 20rpx;
-            padding: 20rpx;
-            margin-bottom: 20rpx;
-            display: flex;
-            align-items: center;
-
-            .avatar {
-                width: 100rpx;
-                height: 100rpx;
-                border-radius: 50rpx;
-                margin-right: 20rpx;
-            }
-
-            .info {
-                flex: 1;
-
-                .name-row {
-                    display: flex;
-                    align-items: center;
-                    margin-bottom: 10rpx;
-
-                    .nickname {
-                        font-size: 32rpx;
-                        color: #2d3436;
-                        margin-right: 16rpx;
-                    }
-
-                    .role-tag {
-                        padding: 4rpx 12rpx;
-                        background-color: #8a8a8a;
-                        border-radius: 8rpx;
-                        font-size: 24rpx;
-                        color: #fff;
-
-                        &.owner {
-                            background-color: #6c5ce7;
-                        }
-
-                        &.admin {
-                            background-color: #00b894;
-                        }
-                    }
-                }
-
-                .join-time {
-                    font-size: 26rpx;
-                    color: #636e72;
-                }
-            }
-
-            .actions {
-                display: flex;
-                flex-direction: column;
-
-                .action-btn {
-                    width: 160rpx;
-                    height: 60rpx;
-                    border-radius: 30rpx;
-                    font-size: 24rpx;
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    margin-bottom: 10rpx;
-                    background-color: #f5f6fa;
-                    color: #2d3436;
-
-                    &:last-child {
-                        margin-bottom: 0;
-                    }
-
-                    &.admin {
-                        background-color: #00b894;
-                        color: #fff;
-                    }
-
-                    &.remove {
-                        background-color: #ff3b30;
-                        color: #fff;
-                    }
-                }
-            }
-        }
-
-        .loading-more, .no-more {
-            text-align: center;
-            padding: 30rpx 0;
-            font-size: 26rpx;
-            color: #8a8a8a;
-        }
-    }
+  }
 }
-</style> 
+</style>
