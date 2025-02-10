@@ -1,17 +1,34 @@
 <script setup lang="ts">
-import { onLaunch, onShow, onHide } from "@dcloudio/uni-app";
+import { onLaunch, onHide } from '@dcloudio/uni-app'
+import { websocket } from './utils/websocket'
+import { useUserStore } from './stores/user'
+
 onLaunch(() => {
-  console.log("App Launch");
-});
-onShow(() => {
-  console.log("App Show");
-});
+  const userStore = useUserStore()
+  // 如果已登录，则连接websocket
+  if (userStore.token) {
+    websocket.connect()
+  }
+})
+
 onHide(() => {
-  console.log("App Hide");
-});
+  // 应用进入后台时关闭连接
+  websocket.close()
+})
 </script>
+
 <style lang="scss">
 @import './styles/animation.scss';
 
-// ... 其他样式 ...
+/* 每个页面公共css */
+page {
+  background-color: #f5f5f5;
+}
+
+/* 统一字体 */
+text {
+  font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Helvetica,
+    Segoe UI, Arial, Roboto, 'PingFang SC', 'miui', 'Hiragino Sans GB', 'Microsoft Yahei',
+    sans-serif;
+}
 </style>
